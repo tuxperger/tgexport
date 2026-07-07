@@ -13,12 +13,12 @@ dependencies = [
     "python-dotenv",
     # SOCKS/HTTP proxy support for Telethon (TG_PROXY)
     "python-socks[asyncio]",
-    "opentele>=1.15.1",
 ]
 
 [project.optional-dependencies]
 # Import an existing Telegram Desktop session (tdata) instead of my.telegram.org creds.
-tdata = ["opentele"]
+# Pulls in PyQt5 and tgcrypto (C extension: needs a compiler on Python ≥3.12).
+tdata = ["opentele>=1.15.1"]
 
 [dependency-groups]
 # ruff is intentionally not here: its PyPI wheel is a dynamically linked

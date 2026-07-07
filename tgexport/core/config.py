@@ -92,19 +92,26 @@ def _chat_filter_from_env() -> ChatFilter | None:
     )
 
 
+# Telegram Desktop's official API credentials, published in the tdesktop
+# source (Telegram/SourceFiles/config.h). Duplicated here so that servers
+# running an already-imported session don't need opentele (which drags in
+# PyQt5 and tgcrypto, a C extension without wheels for recent Pythons).
+_TDESKTOP_API_ID = 2040
+_TDESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
+
 def _desktop_api_credentials() -> tuple[int, str]:
-    """Telegram Desktop's official API credentials, taken from opentele.
+    """Telegram Desktop's official API credentials.
 
     Required when the session was imported from a Telegram Desktop tdata folder:
-    a session must keep using the credentials it was created with.
+    a session must keep using the credentials it was created with. Taken from
+    opentele when it is installed (the tdata import path), otherwise from the
+    constants above.
     """
     try:
         from opentele.api import API
-    except ImportError as exc:
-        raise ConfigError(
-            "TG_API_CREDENTIALS=desktop requires the 'opentele' package. "
-            "Install it with: pip install 'tgexport[tdata]'"
-        ) from exc
+    except ImportError:
+        return _TDESKTOP_API_ID, _TDESKTOP_API_HASH
     api = API.TelegramDesktop
     return int(api.api_id), str(api.api_hash)
 

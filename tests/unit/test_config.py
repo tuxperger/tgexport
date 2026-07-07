@@ -62,10 +62,13 @@ def test_desktop_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_desktop_credentials_without_opentele(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without opentele the bundled Telegram Desktop constants are used, so
+    # servers running an already-imported session don't need the tdata extra.
     monkeypatch.setitem(sys.modules, "opentele", None)  # force ImportError
     monkeypatch.setenv("TG_API_CREDENTIALS", "desktop")
-    with pytest.raises(ConfigError, match="opentele"):
-        load_config(_EMPTY_ENV)
+    cfg = load_config(_EMPTY_ENV)
+    assert cfg.api_id == 2040
+    assert cfg.api_hash == "b18441a1ff607e10a989891a5462e627"
 
 
 def test_invalid_credentials_mode(monkeypatch: pytest.MonkeyPatch) -> None:
