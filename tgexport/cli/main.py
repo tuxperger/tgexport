@@ -8,6 +8,8 @@ from pathlib import Path
 import click
 from rich.logging import RichHandler
 
+from tgexport.cli._console import console
+
 
 @click.group()
 @click.option(
@@ -48,7 +50,7 @@ def cli(
         level="DEBUG" if verbose >= 2 else "INFO",
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
     if verbose == 1:
         logging.getLogger("tgexport").setLevel(logging.DEBUG)

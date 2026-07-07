@@ -7,9 +7,9 @@ import logging
 import sys
 
 import click
-from rich.console import Console
 from rich.table import Table
 
+from tgexport.cli._console import console
 from tgexport.cli._helpers import EXIT_TELEGRAM_ERROR, resolve_config
 from tgexport.core.config import ChatFilter, Config, DialogType
 from tgexport.fetch.client import TelegramSession
@@ -18,7 +18,6 @@ from tgexport.fetch.rate_limiter import RateLimiter
 from tgexport.storage.models import RawDialog
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 async def _fetch_dialogs(cfg: Config, types: tuple[DialogType, ...]) -> list[RawDialog]:

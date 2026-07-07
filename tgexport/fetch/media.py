@@ -55,6 +55,7 @@ async def download_attachment(
     message_id: int,
     tmp_dir: Path,
     progress_callback: Callable[[int, int], None] | None = None,
+    status_callback: Callable[[str], None] | None = None,
 ) -> tuple[Path, str] | None:
     """Download the media of one message to a temp file.
 
@@ -63,11 +64,18 @@ async def download_attachment(
     (new hash) or discard it (duplicate) and where to move it.
 
     progress_callback receives (bytes_received, bytes_total) during the
-    transfer (Telethon's download_media contract).
+    transfer (Telethon's download_media contract). status_callback receives
+    a short phase description before the transfer starts, so the caller can
+    show where a slow download is actually spending its time.
     """
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
+    def _status(phase: str) -> None:
+        if status_callback is not None:
+            status_callback(phase)
+
     async def _fetch() -> Path | None:
+        _status("resolving message")
         message = await client.get_messages(chat_id, ids=message_id)
         if message is None or message.media is None:
             logger.warning("chat=%d msg=%d: no downloadable media (deleted?)", chat_id, message_id)
@@ -86,7 +94,9 @@ async def download_attachment(
             message_id,
             media_dc if media_dc is not None else "of current session",
         )
+        _status("waiting for download slot")
         async with rate_limiter.acquire_download():
+            _status("starting transfer")
             fd, tmp_name = tempfile.mkstemp(dir=tmp_dir, prefix="dl_")
             os.close(fd)
             result = await client.download_media(
@@ -108,6 +118,7 @@ async def download_attachment(
     if tmp_path is None:
         return None
 
+    _status("hashing")
     digest = hashlib.sha256()
     with open(tmp_path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):

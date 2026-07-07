@@ -3,6 +3,12 @@
 {% block nav %}{% endblock %}
 {% block content %}
 <h1>Telegram Archive</h1>
+
+<div class="search-box">
+  <input id="search-input" type="search" placeholder="Search across all chats…" autocomplete="off">
+</div>
+<div id="search-results" class="search-results" hidden></div>
+
 <ul class="chat-list">
 {% for entry in chats %}
   <li>
@@ -15,4 +21,95 @@
   </li>
 {% endfor %}
 </ul>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var input = document.getElementById("search-input");
+  var box = document.getElementById("search-results");
+  var chats = null;          // [{id, title}] from chats.js
+  var indexes = {};          // chat id -> search data from <chat>/search.js
+  var loadedCount = 0, requested = false;
+
+  window.TG_CHATS_REGISTER = function (list) {
+    chats = list;
+    chats.forEach(function (c) {
+      var s = document.createElement("script");
+      s.src = c.id + "/search.js";
+      s.onerror = function () { loadedCount++; run(); };
+      document.head.appendChild(s);
+    });
+  };
+  window.TG_SEARCH_REGISTER = function (d) {
+    indexes[d.id] = d;
+    loadedCount++;
+    run();
+  };
+
+  function load() {
+    if (requested) return;
+    requested = true;
+    var s = document.createElement("script");
+    s.src = "chats.js";
+    s.onerror = function () { box.hidden = false; box.textContent = "chats.js not found — re-run `tgexport render`"; };
+    document.head.appendChild(s);
+  }
+
+  function run() {
+    var q = input.value.trim().toLowerCase();
+    if (!q) { box.hidden = true; box.innerHTML = ""; return; }
+    load();
+    box.hidden = false;
+    var pending = chats === null || loadedCount < chats.length;
+    var words = q.split(/\s+/);
+    var hits = [];
+    outer:
+    for (var id in indexes) {
+      var d = indexes[id];
+      for (var i = 0; i < d.messages.length; i++) {
+        var m = d.messages[i]; // [id, page, sender, date, text]
+        var hay = (m[2] + "\n" + m[4]).toLowerCase();
+        var ok = true;
+        for (var w = 0; w < words.length; w++) if (hay.indexOf(words[w]) === -1) { ok = false; break; }
+        if (ok) {
+          hits.push({ chat: d, m: m });
+          if (hits.length >= 300) break outer;
+        }
+      }
+    }
+    render(hits, pending);
+  }
+
+  function render(hits, pending) {
+    box.innerHTML = "";
+    var head = document.createElement("div");
+    head.className = "search-count";
+    head.textContent =
+      (hits.length ? hits.length + " result(s)" + (hits.length >= 300 ? ", showing first 300" : "") : "No results") +
+      (pending ? " — loading indexes (" + loadedCount + "/" + (chats ? chats.length : "?") + ")…" : "");
+    box.appendChild(head);
+    hits.forEach(function (h) {
+      var a = document.createElement("a");
+      a.className = "search-result";
+      a.href = h.chat.id + "/page_" + String(h.m[1]).padStart(3, "0") + ".html#msg-" + h.m[0];
+      var meta = document.createElement("div");
+      meta.className = "sr-meta";
+      var chatSpan = document.createElement("span");
+      chatSpan.className = "sr-chat";
+      chatSpan.textContent = h.chat.title;
+      meta.appendChild(chatSpan);
+      meta.appendChild(document.createTextNode(" · " + (h.m[2] || "Unknown") + " · " + h.m[3].slice(0, 10)));
+      var body = document.createElement("div");
+      body.textContent = h.m[4].length > 200 ? h.m[4].slice(0, 200) + "…" : h.m[4];
+      a.appendChild(meta);
+      a.appendChild(body);
+      box.appendChild(a);
+    });
+  }
+
+  input.addEventListener("input", run);
+  input.addEventListener("focus", load);
+})();
+</script>
 {% endblock %}

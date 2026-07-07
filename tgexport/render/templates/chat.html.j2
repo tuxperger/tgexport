@@ -4,6 +4,11 @@
 {% block content %}
 <h1>{{ chat.title }} <span class="type-badge">{{ chat.type }}</span></h1>
 
+<div class="search-box">
+  <input id="search-input" type="search" placeholder="Search in this chat…" autocomplete="off">
+</div>
+<div id="search-results" class="search-results" hidden></div>
+
 {% for msg in messages %}
 <div class="msg" id="msg-{{ msg.id }}">
   {% if msg.service_type %}
@@ -84,4 +89,68 @@
   <span>page {{ page }} of {{ total_pages }}</span>
   {% if page < total_pages %}<a href="page_{{ "%03d" | format(page + 1) }}.html">next →</a>{% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var input = document.getElementById("search-input");
+  var box = document.getElementById("search-results");
+  var data = null, requested = false;
+
+  window.TG_SEARCH_REGISTER = function (d) { data = d; run(); };
+
+  function load() {
+    if (requested) return;
+    requested = true;
+    var s = document.createElement("script");
+    s.src = "search.js";
+    s.onerror = function () { box.hidden = false; box.textContent = "search.js not found — re-run `tgexport render`"; };
+    document.head.appendChild(s);
+  }
+
+  function run() {
+    var q = input.value.trim().toLowerCase();
+    if (!q) { box.hidden = true; box.innerHTML = ""; return; }
+    if (!data) { load(); box.hidden = false; box.textContent = "Loading search index…"; return; }
+    var words = q.split(/\s+/);
+    var hits = [];
+    for (var i = 0; i < data.messages.length && hits.length < 200; i++) {
+      var m = data.messages[i]; // [id, page, sender, date, text]
+      var hay = (m[2] + "\n" + m[4]).toLowerCase();
+      var ok = true;
+      for (var w = 0; w < words.length; w++) if (hay.indexOf(words[w]) === -1) { ok = false; break; }
+      if (ok) hits.push(m);
+    }
+    render(hits);
+  }
+
+  function render(hits) {
+    box.hidden = false;
+    box.innerHTML = "";
+    var head = document.createElement("div");
+    head.className = "search-count";
+    head.textContent = hits.length
+      ? hits.length + " result(s)" + (hits.length >= 200 ? ", showing first 200" : "")
+      : "No results";
+    box.appendChild(head);
+    hits.forEach(function (m) {
+      var a = document.createElement("a");
+      a.className = "search-result";
+      a.href = "page_" + String(m[1]).padStart(3, "0") + ".html#msg-" + m[0];
+      var meta = document.createElement("div");
+      meta.className = "sr-meta";
+      meta.textContent = (m[2] || "Unknown") + " · " + m[3].slice(0, 10);
+      var body = document.createElement("div");
+      body.textContent = m[4].length > 200 ? m[4].slice(0, 200) + "…" : m[4];
+      a.appendChild(meta);
+      a.appendChild(body);
+      box.appendChild(a);
+    });
+  }
+
+  input.addEventListener("input", run);
+  input.addEventListener("focus", load);
+})();
+</script>
 {% endblock %}

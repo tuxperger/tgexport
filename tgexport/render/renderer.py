@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 from jinja2 import Environment, PackageLoader, select_autoescape
@@ -44,6 +46,18 @@ def _environment() -> Environment:
     return env
 
 
+def _search_js(payload: Any, callback: str = "TG_SEARCH_REGISTER") -> str:
+    """Serialize payload as a JS callback invocation.
+
+    The search index is a .js file loaded via <script> (not fetch'ed JSON)
+    because browsers block fetch() of local files when the archive is opened
+    over file://. "</" is escaped so message text cannot terminate a
+    surrounding script context.
+    """
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    return f"{callback}({body});"
+
+
 def _media_prefix(output_dir: Path, media_dir: Path) -> str:
     """Relative path prefix from a chat page directory to the media root.
 
@@ -77,6 +91,8 @@ async def render_chat(
     template = env.get_template("chat.html.j2")
     prefix = _media_prefix(output_dir, media_dir)
 
+    # [id, page, sender, date, text] tuples for the client-side search index.
+    search_records: list[list[Any]] = []
     for page in range(1, total_pages + 1):
         messages = await get_messages(conn, chat_id, offset=(page - 1) * page_size, limit=page_size)
         reply_ids = [m.reply_to_msg_id for m in messages if m.reply_to_msg_id is not None]
@@ -90,7 +106,21 @@ async def render_chat(
             media_prefix=prefix,
         )
         (chat_dir / f"page_{page:03d}.html").write_text(html, encoding="utf-8")
-    logger.info("Rendered %s: %d page(s), %d message(s)", chat.title, total_pages, total)
+        search_records.extend(
+            [m.id, page, m.sender_name or "", m.date, m.text]
+            for m in messages
+            if m.text and not m.service_type
+        )
+
+    search_js = _search_js({"id": chat.id, "title": chat.title, "messages": search_records})
+    (chat_dir / "search.js").write_text(search_js, encoding="utf-8")
+    logger.info(
+        "Rendered %s: %d page(s), %d message(s), %d in search index",
+        chat.title,
+        total_pages,
+        total,
+        len(search_records),
+    )
 
 
 async def render_all(
@@ -117,6 +147,11 @@ async def render_all(
         await render_chat(conn, chat.id, output_dir, media_dir, page_size, env)
 
     entries.sort(key=lambda e: e.last_date or "", reverse=True)
+    chats_json = _search_js(
+        [{"id": e.chat.id, "title": e.chat.title} for e in entries if e.message_count],
+        callback="TG_CHATS_REGISTER",
+    )
+    (output_dir / "chats.js").write_text(chats_json, encoding="utf-8")
     index_html = env.get_template("index.html.j2").render(chats=entries)
     (output_dir / "index.html").write_text(index_html, encoding="utf-8")
     logger.info("Rendered index with %d chat(s) → %s", len(entries), output_dir / "index.html")

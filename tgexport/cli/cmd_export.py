@@ -16,11 +16,11 @@ from pathlib import Path
 
 import aiosqlite
 import click
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from telethon import TelegramClient
 
+from tgexport.cli._console import console
 from tgexport.cli._helpers import EXIT_TELEGRAM_ERROR, resolve_config
 from tgexport.core.config import ChatFilter, Config, DialogType
 from tgexport.fetch.client import TelegramSession
@@ -42,7 +42,6 @@ from tgexport.storage.repos.messages import upsert_message
 from tgexport.storage.repos.sync_state import get_sync_state, update_watermark
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 def _parse_filter(
@@ -139,12 +138,24 @@ async def _download_pending_attachments(
 
     for idx, item in enumerate(pending, 1):
         label = f"  [{idx}/{len(pending)}] {item.category} for msg {item.message_id}"
-        progress.update(task, description=label)
+        progress.update(task, description=f"{label}: queued")
 
-        def _on_bytes(current: int, total: int, label: str = label) -> None:
+        def _on_status(phase: str, label: str = label) -> None:
+            progress.update(task, description=f"{label}: {phase}")
+
+        last_reported = [-1]
+
+        def _on_bytes(
+            current: int, total: int, label: str = label, last: list[int] = last_reported
+        ) -> None:
+            # Throttle redraws to ~1 per MiB, but always show the first and last chunk.
+            if 0 <= last[0] and current - last[0] < 2**20 and current != total:
+                return
+            last[0] = current
+            percent = f" ({current / total:.0%})" if total else ""
             progress.update(
                 task,
-                description=f"{label}: {current / 2**20:.1f}/{total / 2**20:.1f} MB",
+                description=f"{label}: {current / 2**20:.1f}/{total / 2**20:.1f} MB{percent}",
             )
 
         try:
@@ -155,6 +166,7 @@ async def _download_pending_attachments(
                 item.message_id,
                 tmp_dir,
                 progress_callback=_on_bytes,
+                status_callback=_on_status,
             )
         except Exception as exc:
             logger.warning("Download failed chat=%d msg=%d: %s", item.chat_id, item.message_id, exc)
@@ -206,12 +218,50 @@ async def _download_pending_attachments(
     return downloaded, failed
 
 
+async def _process_dialog(
+    client: TelegramClient,
+    conn: aiosqlite.Connection,
+    rate_limiter: RateLimiter,
+    cfg: Config,
+    dialog: RawDialog,
+    batch_size: int,
+    no_media: bool,
+    progress: Progress,
+    summary: list[tuple[str, int, int, int]],
+) -> None:
+    """Sync one dialog's messages and media; errors are logged, not raised,
+    so a failing chat doesn't abort the other concurrent workers."""
+    task = progress.add_task(f"{dialog.title}", total=None)
+    try:
+        await upsert_chat(conn, dialog)
+        stored = await _sync_dialog_messages(client, conn, rate_limiter, dialog, batch_size)
+        downloaded = failed = 0
+        if not no_media:
+            downloaded, failed = await _download_pending_attachments(
+                client, conn, rate_limiter, cfg, dialog.id, progress
+            )
+        summary.append((dialog.title, stored, downloaded, failed))
+        logger.info(
+            "%s: %d new messages, %d media downloaded, %d failed",
+            dialog.title,
+            stored,
+            downloaded,
+            failed,
+        )
+    except Exception:
+        logger.exception("%s: sync failed — continuing with other chats", dialog.title)
+        summary.append((dialog.title, -1, -1, -1))
+    finally:
+        progress.remove_task(task)
+
+
 async def _run_export(
     cfg: Config,
     chat_filter: ChatFilter | None,
     no_media: bool,
     no_render: bool,
     batch_size: int,
+    concurrency: int,
 ) -> None:
     rate_limiter = RateLimiter()
     logger.info(
@@ -230,26 +280,28 @@ async def _run_export(
                 TextColumn("[progress.description]{task.description}"),
                 console=console,
             ) as progress:
-                async for dialog in iter_dialogs(client, rate_limiter, chat_filter):
-                    task = progress.add_task(f"{dialog.title}", total=None)
-                    await upsert_chat(conn, dialog)
-                    stored = await _sync_dialog_messages(
-                        client, conn, rate_limiter, dialog, batch_size
-                    )
-                    downloaded = failed = 0
-                    if not no_media:
-                        downloaded, failed = await _download_pending_attachments(
-                            client, conn, rate_limiter, cfg, dialog.id, progress
+                semaphore = asyncio.Semaphore(max(1, concurrency))
+
+                async def bounded(dialog: RawDialog) -> None:
+                    async with semaphore:
+                        await _process_dialog(
+                            client,
+                            conn,
+                            rate_limiter,
+                            cfg,
+                            dialog,
+                            batch_size,
+                            no_media,
+                            progress,
+                            summary,
                         )
-                    summary.append((dialog.title, stored, downloaded, failed))
-                    logger.info(
-                        "%s: %d new messages, %d media downloaded, %d failed",
-                        dialog.title,
-                        stored,
-                        downloaded,
-                        failed,
-                    )
-                    progress.remove_task(task)
+
+                workers = [
+                    asyncio.create_task(bounded(dialog))
+                    async for dialog in iter_dialogs(client, rate_limiter, chat_filter)
+                ]
+                if workers:
+                    await asyncio.gather(*workers)
 
         if not no_render:
             await render_all(conn, cfg.output_dir, cfg.media_dir)
@@ -279,6 +331,12 @@ async def _run_export(
 @click.option("--no-media", is_flag=True, help="Skip attachment downloads.")
 @click.option("--no-render", is_flag=True, help="Skip HTML generation after fetch.")
 @click.option("--batch-size", default=200, show_default=True, help="Messages per watermark commit.")
+@click.option(
+    "--concurrency",
+    default=4,
+    show_default=True,
+    help="Chats synced in parallel. Higher values increase FloodWait risk.",
+)
 @click.pass_context
 def export(
     ctx: click.Context,
@@ -288,13 +346,14 @@ def export(
     no_media: bool,
     no_render: bool,
     batch_size: int,
+    concurrency: int,
 ) -> None:
     """Fetch (or incrementally update) history and attachments, then render HTML."""
     cfg = resolve_config(ctx)
     # CLI flags take precedence over the TG_INCLUDE_CHATS/… settings from .env.
     chat_filter = _parse_filter(include, exclude, types) or cfg.chat_filter
     try:
-        asyncio.run(_run_export(cfg, chat_filter, no_media, no_render, batch_size))
+        asyncio.run(_run_export(cfg, chat_filter, no_media, no_render, batch_size, concurrency))
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — progress saved; rerun to resume.[/yellow]")
         sys.exit(EXIT_TELEGRAM_ERROR)

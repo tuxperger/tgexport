@@ -147,3 +147,51 @@ async def test_pagination_splits_pages(db: aiosqlite.Connection, tmp_path: Path)
     page2 = (output / "300" / "page_002.html").read_text()
     assert "page 2 of 3" in page2
     assert "page_001.html" in page2 and "page_003.html" in page2
+
+
+async def test_search_index_written(populated_db: aiosqlite.Connection, tmp_path: Path) -> None:
+    import json
+
+    output = tmp_path / "output"
+    await render_all(populated_db, output, tmp_path / "data" / "media")
+
+    search_js = (output / "100" / "search.js").read_text()
+    assert search_js.startswith("TG_SEARCH_REGISTER(")
+    data = json.loads(search_js.removeprefix("TG_SEARCH_REGISTER(").removesuffix(");"))
+    assert data["id"] == 100
+    assert data["title"] == "Test Chat"
+    # [id, page, sender, date, text] per message with text
+    texts = {record[4] for record in data["messages"]}
+    assert texts == {"first message", "a reply", "forwarded thing"}
+    assert all(record[1] == 1 for record in data["messages"])  # single page
+
+    chats_js = (output / "chats.js").read_text()
+    assert chats_js.startswith("TG_CHATS_REGISTER(")
+    chats = json.loads(chats_js.removeprefix("TG_CHATS_REGISTER(").removesuffix(");"))
+    assert chats == [{"id": 100, "title": "Test Chat"}]
+
+
+async def test_search_index_paginated_and_script_safe(
+    db: aiosqlite.Connection, tmp_path: Path
+) -> None:
+    import json
+
+    await upsert_chat(db, RawDialog(300, "channel", "C", None, None))
+    for i in range(1, 8):
+        await upsert_message(
+            db,
+            RawMessage(
+                id=i,
+                chat_id=300,
+                sender=SENDER,
+                date=datetime(2026, 7, 1, tzinfo=UTC),
+                text=f"m{i} </script>",
+            ),
+        )
+    output = tmp_path / "out"
+    await render_all(db, output, tmp_path / "media", page_size=3)
+    search_js = (output / "300" / "search.js").read_text()
+    assert "</script>" not in search_js  # escaped so it cannot break a script context
+    data = json.loads(search_js.removeprefix("TG_SEARCH_REGISTER(").removesuffix(");"))
+    pages = {record[0]: record[1] for record in data["messages"]}
+    assert pages == {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3}

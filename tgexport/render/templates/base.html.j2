@@ -73,6 +73,25 @@ details.edit-history li { margin: 2px 0; }
 }
 
 .pagination { display: flex; gap: 16px; justify-content: center; padding: 16px 0; color: var(--muted); }
+
+/* search */
+.search-box { margin: 0 0 16px; }
+.search-box input {
+  width: 100%; padding: 8px 12px; font: inherit; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  outline: none;
+}
+.search-box input:focus { border-color: var(--accent); }
+.search-results { margin-bottom: 16px; }
+.search-count { color: var(--muted); font-size: 13px; padding: 4px 2px; }
+a.search-result {
+  display: block; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; margin-bottom: 6px; padding: 8px 12px; color: var(--text);
+}
+a.search-result:hover { text-decoration: none; border-color: var(--accent); }
+a.search-result .sr-meta { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+a.search-result .sr-meta .sr-chat { color: var(--accent); }
+.msg:target { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 </style>
 </head>
 <body>
@@ -80,5 +99,6 @@ details.edit-history li { margin: 2px 0; }
 <nav class="breadcrumb">{% block nav %}<a href="{{ home_href | default('index.html') }}">← All chats</a>{% endblock %}</nav>
 {% block content %}{% endblock %}
 </div>
+{% block scripts %}{% endblock %}
 </body>
 </html>
