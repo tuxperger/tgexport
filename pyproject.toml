@@ -1,0 +1,68 @@
+[project]
+name = "tgexport"
+version = "0.1.0"
+description = "Personal Telegram account archiver: export to SQLite + offline HTML"
+requires-python = ">=3.12"
+dependencies = [
+    "telethon",
+    "cryptg",
+    "aiosqlite",
+    "jinja2",
+    "click",
+    "rich",
+    "python-dotenv",
+    # SOCKS/HTTP proxy support for Telethon (TG_PROXY)
+    "python-socks[asyncio]",
+    "opentele>=1.15.1",
+]
+
+[project.optional-dependencies]
+# Import an existing Telegram Desktop session (tdata) instead of my.telegram.org creds.
+tdata = ["opentele"]
+
+[dependency-groups]
+# ruff is intentionally not here: its PyPI wheel is a dynamically linked
+# binary that cannot run on NixOS — the flake dev shell provides it instead.
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "mypy",
+]
+
+[project.scripts]
+tgexport = "tgexport.cli.main:cli"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tgexport*"]
+
+[tool.setuptools.package-data]
+"tgexport.storage" = ["migrations/*.sql"]
+"tgexport.render" = ["templates/*.j2"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = "telethon.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "opentele.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "ANN"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

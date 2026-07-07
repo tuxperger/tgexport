@@ -1,0 +1,32 @@
+# Secrets and local data — never commit
+.env
+*.session
+*.session-journal
+*.db
+*.db-wal
+*.db-shm
+data/
+output/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.tmp
+
+# Nix
+.direnv/
+result

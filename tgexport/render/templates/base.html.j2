@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Telegram Archive{% endblock %}</title>
+<style>
+:root {
+  --bg: #0e1621; --panel: #17212b; --text: #e9edf0; --muted: #7f8b99;
+  --accent: #64b3f4; --quote: #2b3947; --border: #232f3b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.container { max-width: 860px; margin: 0 auto; padding: 16px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+nav.breadcrumb { padding: 12px 0; color: var(--muted); font-size: 14px; }
+h1 { font-size: 22px; margin: 8px 0 16px; }
+
+/* index */
+ul.chat-list { list-style: none; padding: 0; margin: 0; }
+ul.chat-list li {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; margin-bottom: 8px; padding: 12px 16px;
+}
+.chat-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.type-badge {
+  display: inline-block; font-size: 11px; text-transform: uppercase;
+  background: var(--quote); color: var(--muted); border-radius: 4px;
+  padding: 1px 6px; margin-left: 8px; vertical-align: middle;
+}
+
+/* messages */
+.msg {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; margin-bottom: 8px; padding: 10px 14px;
+}
+.msg-header { display: flex; gap: 8px; align-items: baseline; }
+.msg-sender { font-weight: 600; color: var(--accent); }
+.msg-date { color: var(--muted); font-size: 12px; }
+.msg-text { white-space: pre-wrap; word-wrap: break-word; margin-top: 4px; }
+.msg-service { color: var(--muted); font-style: italic; }
+.msg-deleted { color: var(--muted); font-style: italic; }
+.edited-marker { color: var(--muted); font-size: 12px; }
+details.edit-history { margin-top: 4px; font-size: 13px; color: var(--muted); }
+details.edit-history li { margin: 2px 0; }
+
+.reply-quote {
+  border-left: 3px solid var(--accent); background: var(--quote);
+  border-radius: 0 6px 6px 0; padding: 6px 10px; margin: 6px 0;
+  font-size: 13px;
+}
+.reply-quote .reply-sender { font-weight: 600; }
+.fwd-from { color: var(--muted); font-size: 13px; margin-bottom: 2px; }
+
+.media img { max-width: 360px; max-height: 360px; border-radius: 8px; display: block; margin-top: 6px; }
+.media video { max-width: 420px; border-radius: 8px; display: block; margin-top: 6px; }
+.media video.video-note { width: 240px; height: 240px; border-radius: 50%; object-fit: cover; }
+.media audio { display: block; margin-top: 6px; width: 320px; }
+.media a.doc-link {
+  display: inline-block; background: var(--quote); border-radius: 6px;
+  padding: 6px 10px; margin-top: 6px; font-size: 14px;
+}
+.media .missing { color: var(--muted); font-size: 13px; font-style: italic; }
+
+.reactions { margin-top: 6px; }
+.reactions span {
+  display: inline-block; background: var(--quote); border-radius: 12px;
+  font-size: 13px; padding: 2px 8px; margin-right: 4px; margin-bottom: 2px;
+}
+
+.pagination { display: flex; gap: 16px; justify-content: center; padding: 16px 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+<nav class="breadcrumb">{% block nav %}<a href="{{ home_href | default('index.html') }}">← All chats</a>{% endblock %}</nav>
+{% block content %}{% endblock %}
+</div>
+</body>
+</html>

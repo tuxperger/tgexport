@@ -1,0 +1,18 @@
+{% extends "base.html.j2" %}
+{% block title %}Telegram Archive{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<h1>Telegram Archive</h1>
+<ul class="chat-list">
+{% for entry in chats %}
+  <li>
+    <a href="{{ entry.chat.id }}/page_001.html">{{ entry.chat.title }}</a>
+    <span class="type-badge">{{ entry.chat.type }}</span>
+    <div class="chat-meta">
+      {% if entry.message_count == 0 %}(empty){% else %}{{ entry.message_count }} messages{% endif %}
+      {% if entry.last_date %} · last: {{ entry.last_date | format_datetime }}{% endif %}
+    </div>
+  </li>
+{% endfor %}
+</ul>
+{% endblock %}
