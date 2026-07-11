@@ -4,13 +4,16 @@ the caller (CLI layer) owns deduplication decisions and DB writes.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import re
 import stat
 import tempfile
+import time
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 from telethon import TelegramClient
@@ -21,6 +24,11 @@ from tgexport.fetch.rate_limiter import RateLimiter, call_with_retry
 logger = logging.getLogger(__name__)
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+# A transfer that produced no bytes for this long is considered stalled and is
+# cancelled so call_with_retry can restart it (Telethon's cross-DC download
+# connections can die silently, leaving download_media awaiting forever).
+STALL_TIMEOUT_SECONDS = 60.0
 
 
 class MediaDownloadError(Exception):
@@ -99,9 +107,39 @@ async def download_attachment(
             _status("starting transfer")
             fd, tmp_name = tempfile.mkstemp(dir=tmp_dir, prefix="dl_")
             os.close(fd)
-            result = await client.download_media(
-                message, file=tmp_name, progress_callback=progress_callback
+
+            last_activity = time.monotonic()
+
+            def _tracked_progress(current: int, total: int) -> None:
+                nonlocal last_activity
+                last_activity = time.monotonic()
+                if progress_callback is not None:
+                    progress_callback(current, total)
+
+            transfer = asyncio.ensure_future(
+                client.download_media(message, file=tmp_name, progress_callback=_tracked_progress)
             )
+            try:
+                while True:
+                    try:
+                        result = await asyncio.wait_for(
+                            asyncio.shield(transfer), timeout=STALL_TIMEOUT_SECONDS
+                        )
+                        break
+                    except TimeoutError:
+                        idle = time.monotonic() - last_activity
+                        if idle < STALL_TIMEOUT_SECONDS:
+                            continue  # bytes are still flowing, just a long transfer
+                        raise TimeoutError(
+                            f"transfer stalled: no data for {idle:.0f}s "
+                            f"(chat={chat_id} msg={message_id})"
+                        ) from None
+            except BaseException:
+                transfer.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await transfer
+                Path(tmp_name).unlink(missing_ok=True)
+                raise
             if result is None:
                 Path(tmp_name).unlink(missing_ok=True)
                 return None

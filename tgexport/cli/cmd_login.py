@@ -74,7 +74,7 @@ def login(
                     tdata_dir,
                     cfg.session_path,
                     passcode,
-                    proxy=cfg.proxy,
+                    proxies=cfg.proxies,
                     reuse_current=reuse_current_session,
                     password=password,
                 )

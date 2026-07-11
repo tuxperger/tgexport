@@ -27,9 +27,10 @@ class Config:
     media_dir: Path
     output_dir: Path
     log_level: str = "INFO"
-    # Proxy URL for reaching Telegram: socks5://[user:pass@]host:port,
-    # socks4://, http://, or mtproxy://SECRET@host:port. None = direct.
-    proxy: str | None = None
+    # Proxy URLs for reaching Telegram, tried in order until one is reachable:
+    # socks5://[user:pass@]host:port, socks4://, http://, or
+    # mtproxy://SECRET@host:port. Empty = direct connection.
+    proxies: tuple[str, ...] = ()
     # Default dialog selection from TG_INCLUDE_CHATS / TG_EXCLUDE_CHATS /
     # TG_CHAT_TYPES; CLI --include/--exclude/--type flags take precedence.
     chat_filter: ChatFilter | None = None
@@ -162,6 +163,6 @@ def load_config(env_file: Path | None = None) -> Config:
         media_dir=Path(os.environ.get("TG_MEDIA_DIR", "data/media")),
         output_dir=Path(os.environ.get("TG_OUTPUT_DIR", "output")),
         log_level=os.environ.get("TG_LOG_LEVEL", "INFO"),
-        proxy=os.environ.get("TG_PROXY") or None,
+        proxies=_split_csv(os.environ.get("TG_PROXY", "")),
         chat_filter=_chat_filter_from_env(),
     )

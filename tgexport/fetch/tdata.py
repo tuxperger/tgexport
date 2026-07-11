@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from tgexport.fetch.client import (
     _restrict_session_permissions,
     check_mtproto_reachable,
+    pick_working_proxy,
     proxy_client_kwargs,
 )
 
@@ -80,7 +82,7 @@ async def import_tdata_session(
     tdata_dir: Path,
     session_path: Path,
     passcode: str | None = None,
-    proxy: str | None = None,
+    proxies: Sequence[str] = (),
     *,
     reuse_current: bool = False,
     password: str | None = None,
@@ -111,6 +113,7 @@ async def import_tdata_session(
     if not tdata_dir.is_dir():
         raise TdataImportError(f"tdata directory not found: {tdata_dir}")
     session_path.parent.mkdir(parents=True, exist_ok=True)
+    proxy = await pick_working_proxy(proxies)
     proxy_kwargs = proxy_client_kwargs(proxy)
 
     try:

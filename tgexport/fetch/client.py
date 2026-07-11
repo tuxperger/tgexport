@@ -12,6 +12,7 @@ import logging
 import os
 import stat
 from pathlib import Path
+from collections.abc import Sequence
 from types import TracebackType
 from typing import Any
 from urllib.parse import urlsplit
@@ -130,6 +131,42 @@ def proxy_client_kwargs(proxy_url: str | None) -> dict[str, Any]:
     )
 
 
+async def pick_working_proxy(proxies: Sequence[str]) -> str | None:
+    """Return the first proxy from TG_PROXY that accepts TCP connections.
+
+    Returns None when no proxies are configured (direct connection). All URLs
+    are validated up front so a typo in a fallback proxy surfaces immediately,
+    not only when the proxies before it go down. Raises ConnectionError when
+    every configured proxy is unreachable.
+    """
+    for url in proxies:
+        proxy_client_kwargs(url)
+    failures = []
+    for url in proxies:
+        parsed = urlsplit(url)
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(parsed.hostname, parsed.port), timeout=5
+            )
+        except (OSError, TimeoutError) as exc:
+            logger.warning(
+                "Proxy %s:%s is unreachable (%r), trying the next one",
+                parsed.hostname,
+                parsed.port,
+                exc,
+            )
+            failures.append(f"{parsed.hostname}:{parsed.port} ({exc!r})")
+            continue
+        writer.close()
+        await writer.wait_closed()
+        return url
+    if not proxies:
+        return None
+    raise ConnectionError(
+        "None of the proxies in TG_PROXY are reachable over TCP: " + "; ".join(failures)
+    )
+
+
 def _restrict_session_permissions(session_path: Path) -> None:
     if session_path.suffix != ".session":
         session_file = session_path.with_suffix(".session")
@@ -150,6 +187,7 @@ class TelegramSession:
         cfg = self._cfg
         cfg.session_path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(cfg.session_path.parent, stat.S_IRWXU)
+        proxy = await pick_working_proxy(cfg.proxies)
         # api_id/api_hash must be keyword arguments: importing opentele (done by
         # load_config for TG_API_CREDENTIALS=desktop) monkeypatches
         # TelegramClient.__init__ with an extra positional `api` parameter, which
@@ -158,10 +196,10 @@ class TelegramSession:
             str(cfg.session_path),
             api_id=cfg.api_id,
             api_hash=cfg.api_hash,
-            **proxy_client_kwargs(cfg.proxy),
+            **proxy_client_kwargs(proxy),
         )
         instrument_dc_logging(client)
-        await check_mtproto_reachable(client, cfg.proxy)
+        await check_mtproto_reachable(client, proxy)
         await client.connect()
         if not await client.is_user_authorized():
             await _interactive_login(client)

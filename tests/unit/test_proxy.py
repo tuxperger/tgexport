@@ -1,10 +1,12 @@
-"""Unit tests for TG_PROXY URL parsing and connectivity probe targets."""
+"""Unit tests for TG_PROXY URL parsing, connectivity probe targets and failover."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from tgexport.fetch.client import _probe_target, proxy_client_kwargs
+from tgexport.fetch.client import _probe_target, pick_working_proxy, proxy_client_kwargs
 
 
 def test_no_proxy() -> None:
@@ -63,6 +65,54 @@ def test_probe_target_fresh_session_uses_default_dc() -> None:
     host, port, description = _probe_target(0, None, None, None)
     assert (host, port) == ("149.154.167.51", 443)
     assert "DC 2" in description
+
+
+async def _local_listener() -> tuple[asyncio.Server, int]:
+    server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1]
+
+
+async def _free_port() -> int:
+    server, port = await _local_listener()
+    server.close()
+    await server.wait_closed()
+    return port
+
+
+async def test_pick_working_proxy_empty_means_direct() -> None:
+    assert await pick_working_proxy(()) is None
+
+
+async def test_pick_working_proxy_skips_unreachable() -> None:
+    dead_port = await _free_port()
+    server, live_port = await _local_listener()
+    try:
+        picked = await pick_working_proxy(
+            (f"socks5://127.0.0.1:{dead_port}", f"socks5://127.0.0.1:{live_port}")
+        )
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert picked == f"socks5://127.0.0.1:{live_port}"
+
+
+async def test_pick_working_proxy_all_unreachable() -> None:
+    port = await _free_port()
+    with pytest.raises(ConnectionError, match="None of the proxies"):
+        await pick_working_proxy((f"socks5://127.0.0.1:{port}",))
+
+
+async def test_pick_working_proxy_validates_all_urls_first() -> None:
+    server, live_port = await _local_listener()
+    try:
+        # The bad fallback URL must fail even though the first proxy is reachable.
+        with pytest.raises(ValueError, match="scheme"):
+            await pick_working_proxy(
+                (f"socks5://127.0.0.1:{live_port}", "ftp://127.0.0.1:21")
+            )
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def test_probe_target_via_proxy_hides_credentials() -> None:
