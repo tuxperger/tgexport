@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -70,5 +71,5 @@ async def test_media_src_is_relative(db: aiosqlite.Connection, tmp_path: Path) -
 
     output = tmp_path / "out"
     await render_all(db, output, tmp_path / "data" / "media")
-    html = (output / "100" / "page_001.html").read_text()
-    assert 'src="../' in html, "media src must be a relative path climbing out of the chat dir"
+    meta = json.loads((output / "100" / "data" / "meta.json").read_text())
+    assert meta["media_prefix"].startswith("../"), "media prefix must climb out of the chat dir"

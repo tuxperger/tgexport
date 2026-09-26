@@ -188,6 +188,30 @@ async def get_messages_by_ids(
     return result
 
 
+async def get_chat_messages_plain(conn: aiosqlite.Connection, chat_id: int) -> list[Message]:
+    """All messages of a chat by date, without related rows (used by dataset export)."""
+    cursor = await conn.execute(
+        "SELECT * FROM messages WHERE chat_id = ? ORDER BY date, id", (chat_id,)
+    )
+    return [
+        Message(
+            id=row["id"],
+            chat_id=row["chat_id"],
+            sender_id=row["sender_id"],
+            sender_name=row["sender_name"],
+            date=row["date"],
+            text=row["text"],
+            reply_to_msg_id=row["reply_to_msg_id"],
+            fwd_from_chat_id=row["fwd_from_chat_id"],
+            fwd_from_msg_id=row["fwd_from_msg_id"],
+            fwd_from_name=row["fwd_from_name"],
+            service_type=row["service_type"],
+            is_deleted=bool(row["is_deleted"]),
+        )
+        for row in await cursor.fetchall()
+    ]
+
+
 async def get_message_count(conn: aiosqlite.Connection, chat_id: int) -> int:
     cursor = await conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ?", (chat_id,))
     row = await cursor.fetchone()

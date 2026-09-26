@@ -4,6 +4,8 @@
 {% block content %}
 <h1>Telegram Archive</h1>
 
+<div id="status" class="status" hidden>Browsers block loading data over file:// — open the archive via <code>tgexport serve</code>.</div>
+
 <div class="search-box">
   <input id="search-input" type="search" placeholder="Search across all chats…" autocomplete="off">
 </div>
@@ -12,7 +14,7 @@
 <ul class="chat-list">
 {% for entry in chats %}
   <li>
-    <a href="{{ entry.chat.id }}/page_001.html">{{ entry.chat.title }}</a>
+    <a href="{{ entry.chat.id }}/index.html">{{ entry.chat.title }}</a>
     <span class="type-badge">{{ entry.chat.type }}</span>
     <div class="chat-meta">
       {% if entry.message_count == 0 %}(empty){% else %}{{ entry.message_count }} messages{% endif %}
@@ -26,34 +28,37 @@
 <script>
 (function () {
   "use strict";
+  if (location.protocol === "file:") document.getElementById("status").hidden = false;
+
   var input = document.getElementById("search-input");
   var box = document.getElementById("search-results");
-  var chats = null;          // [{id, title}] from chats.js
-  var indexes = {};          // chat id -> search data from <chat>/search.js
+  var chats = null;          // [{id, title}] from chats.json
+  var indexes = {};          // chat id -> [id, chunk, sender, date, text][]
   var loadedCount = 0, requested = false;
 
-  window.TG_CHATS_REGISTER = function (list) {
-    chats = list;
-    chats.forEach(function (c) {
-      var s = document.createElement("script");
-      s.src = c.id + "/search.js";
-      s.onerror = function () { loadedCount++; run(); };
-      document.head.appendChild(s);
+  function fetchJSON(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(url + ": HTTP " + r.status);
+      return r.json();
     });
-  };
-  window.TG_SEARCH_REGISTER = function (d) {
-    indexes[d.id] = d;
-    loadedCount++;
-    run();
-  };
+  }
 
   function load() {
     if (requested) return;
     requested = true;
-    var s = document.createElement("script");
-    s.src = "chats.js";
-    s.onerror = function () { box.hidden = false; box.textContent = "chats.js not found — re-run `tgexport render`"; };
-    document.head.appendChild(s);
+    fetchJSON("chats.json").then(function (list) {
+      chats = list;
+      chats.forEach(function (c) {
+        fetchJSON(c.id + "/data/search.json")
+          .then(function (d) { indexes[c.id] = { chat: c, messages: d }; })
+          .catch(function () {})
+          .then(function () { loadedCount++; run(); });
+      });
+      run();
+    }).catch(function (err) {
+      box.hidden = false;
+      box.textContent = "chats.json unavailable (" + err.message + ") — re-run `tgexport render` and open via `tgexport serve`";
+    });
   }
 
   function run() {
@@ -68,12 +73,12 @@
     for (var id in indexes) {
       var d = indexes[id];
       for (var i = 0; i < d.messages.length; i++) {
-        var m = d.messages[i]; // [id, page, sender, date, text]
+        var m = d.messages[i]; // [id, chunk, sender, date, text]
         var hay = (m[2] + "\n" + m[4]).toLowerCase();
         var ok = true;
         for (var w = 0; w < words.length; w++) if (hay.indexOf(words[w]) === -1) { ok = false; break; }
         if (ok) {
-          hits.push({ chat: d, m: m });
+          hits.push({ chat: d.chat, m: m });
           if (hits.length >= 300) break outer;
         }
       }
@@ -92,7 +97,7 @@
     hits.forEach(function (h) {
       var a = document.createElement("a");
       a.className = "search-result";
-      a.href = h.chat.id + "/page_" + String(h.m[1]).padStart(3, "0") + ".html#msg-" + h.m[0];
+      a.href = h.chat.id + "/index.html#msg-" + h.m[0];
       var meta = document.createElement("div");
       meta.className = "sr-meta";
       var chatSpan = document.createElement("span");

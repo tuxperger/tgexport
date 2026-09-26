@@ -90,20 +90,71 @@ network access.
 
 ```
 tgexport render
-    [--include ID_OR_NAME […]]
-    [--page-size N]
-    [--force]
+    [--include ID […]]
+    [--chunk-size N]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--include` | (all) | Limit render to specified chat IDs or titles |
-| `--page-size N` | 500 | Messages per HTML page |
-| `--force` | off | Re-render even if output is up to date |
+| `--include` | (all) | Limit render to specified chat IDs |
+| `--chunk-size N` | 1000 | Messages per JSON data chunk |
 
-**Output**: `output/index.html` and `output/<chat_id>/page_NNN.html`.
+**Output**:
+
+```
+output/index.html                       chat list + global search
+output/chats.json                       [{id, title}]
+output/<chat_id>/index.html             single viewer page per chat
+output/<chat_id>/data/meta.json         chat info, media prefix, chunk directory
+output/<chat_id>/data/chunk_NNNN.json   messages (chronological, N per chunk)
+output/<chat_id>/data/search.json       [id, chunk, sender, date, text] tuples
+```
+
+The viewer opens at the newest messages and loads neighbouring chunks while
+scrolling; `#msg-<id>` links load the chunk containing that message. Browsers
+refuse fetch() over file://, so view the archive via `tgexport serve`.
 
 **Exit codes**: 0 = success, 1 = DB error, 2 = config error.
+
+---
+
+### `tgexport serve`
+
+```
+tgexport serve [--host 127.0.0.1] [--port 8000]
+```
+
+Serves the archive over loopback HTTP. Only the output and media directories are
+reachable; the session file and database return 404.
+
+---
+
+### `tgexport dataset`
+
+Build an LLM fine-tuning dataset of channel posts, to teach a model to write posts
+in the channels' style. Offline, reads the local database only.
+
+```
+tgexport dataset
+    [--out DIR]             default: <data dir>/dataset
+    [--include ID […]] [--type TYPE […]]      default type: channel
+    [--format chat|text]    chat (default) or raw text
+    [--system TEXT]         system prompt, "{chat}" → channel title ("" to omit)
+    [--prompt TEXT]         user instruction before each post
+    [--min-chars N]         40 — shorter posts are skipped
+    [--include-forwards]    keep reposts from other channels
+    [--val-ratio F] [--seed N]
+```
+
+**Output**: `train.jsonl` and `val.jsonl`, one post per line:
+
+- `chat`: `{"messages": [system, {"role": "user", "content": <prompt>}, {"role": "assistant", "content": <post>}]}`
+- `text`: `{"text": <post>}`
+
+Post text keeps Telethon's markdown (bold, links). Service messages, caption-less
+album items, short posts, reposts and exact duplicates are skipped.
+
+**Exit codes**: 0 = success, 1 = DB missing.
 
 ---
 

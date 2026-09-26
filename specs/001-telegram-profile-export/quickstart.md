@@ -45,14 +45,14 @@ tgexport login
 tgexport export
 
 # Step 3: Open the archive
-xdg-open output/index.html   # or open output/index.html on macOS
+tgexport serve   # then open the printed http://127.0.0.1:8000/... URL
 ```
 
 **Expected outcomes**:
 - `data/session.session` exists and has permissions 600.
 - `data/archive.db` exists and is non-empty.
 - `output/index.html` lists all exported chats.
-- For each chat, `output/<chat_id>/page_001.html` (and further pages if needed) exists.
+- For each chat, `output/<chat_id>/index.html` and `output/<chat_id>/data/chunk_0000.json` exist.
 - At least one attachment file appears under `data/media/`.
 
 ---

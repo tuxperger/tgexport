@@ -3,154 +3,310 @@
 {% block nav %}<a href="../index.html">← All chats</a>{% endblock %}
 {% block content %}
 <h1>{{ chat.title }} <span class="type-badge">{{ chat.type }}</span></h1>
+<div id="chat-stats" class="chat-meta"></div>
 
 <div class="search-box">
   <input id="search-input" type="search" placeholder="Search in this chat…" autocomplete="off">
 </div>
 <div id="search-results" class="search-results" hidden></div>
 
-{% for msg in messages %}
-<div class="msg" id="msg-{{ msg.id }}">
-  {% if msg.service_type %}
-    <div class="msg-service">— {{ msg.service_type }}{% if msg.text %}: {{ msg.text }}{% endif %} —</div>
-  {% elif msg.is_deleted and not msg.text %}
-    <div class="msg-deleted">[message deleted]</div>
-  {% else %}
-    <div class="msg-header">
-      <span class="msg-sender">{{ msg.sender_name or "Unknown" }}</span>
-      <span class="msg-date">{{ msg.date | format_datetime }}</span>
-      {% if msg.edits %}<span class="edited-marker">✎ edited</span>{% endif %}
-      {% if msg.is_deleted %}<span class="msg-deleted">[deleted]</span>{% endif %}
-    </div>
-
-    {% if msg.fwd_from_name %}
-    <div class="fwd-from">↪ forwarded from {{ msg.fwd_from_name }}</div>
-    {% endif %}
-
-    {% if msg.reply_to_msg_id %}
-    <div class="reply-quote">
-      {% set quoted = reply_map.get(msg.reply_to_msg_id) %}
-      {% if quoted %}
-        <span class="reply-sender">{{ quoted.sender_name or "Unknown" }}</span><br>
-        <a href="#msg-{{ quoted.id }}">{{ quoted.text | truncate_text }}</a>
-      {% else %}
-        <span class="missing">(message unavailable)</span>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    {% if msg.text %}<div class="msg-text">{{ msg.text }}</div>{% endif %}
-
-    {% for att in msg.attachments %}
-    <div class="media">
-      {% if att.local_path %}
-        {% set src = media_prefix ~ att.local_path %}
-        {% if att.category == "photo" or att.category == "sticker" %}
-          <a href="{{ src }}"><img src="{{ src }}" alt="{{ att.category }}" loading="lazy"></a>
-        {% elif att.category == "video" %}
-          <video controls preload="metadata" src="{{ src }}"></video>
-        {% elif att.category == "gif" %}
-          <video autoplay loop muted playsinline src="{{ src }}"></video>
-        {% elif att.category == "video_note" %}
-          <video class="video-note" controls preload="metadata" src="{{ src }}"></video>
-        {% elif att.category == "voice" or att.category == "audio" %}
-          <audio controls preload="none" src="{{ src }}"></audio>
-        {% else %}
-          <a class="doc-link" href="{{ src }}">{{ att.category | media_icon }} {{ att.local_path.rsplit("/", 1)[-1] }}</a>
-        {% endif %}
-      {% else %}
-        <span class="missing">{{ att.category | media_icon }} {{ att.category }} (not downloaded)</span>
-      {% endif %}
-    </div>
-    {% endfor %}
-
-    {% if msg.reactions %}
-    <div class="reactions">
-      {% for r in msg.reactions %}<span>{{ r.emoji }} {{ r.count }}</span>{% endfor %}
-    </div>
-    {% endif %}
-
-    {% if msg.edits | length > 0 %}
-    <details class="edit-history">
-      <summary>edit history</summary>
-      <ul>
-      {% for e in msg.edits %}
-        <li>{{ e.edited_at | format_datetime }}: {{ e.text | truncate_text }}</li>
-      {% endfor %}
-      </ul>
-    </details>
-    {% endif %}
-  {% endif %}
+<div id="status" class="status" hidden></div>
+<div id="feed">
+  <div id="messages"></div>
 </div>
-{% endfor %}
-
-<div class="pagination">
-  {% if page > 1 %}<a href="page_{{ "%03d" | format(page - 1) }}.html">← prev</a>{% endif %}
-  <span>page {{ page }} of {{ total_pages }}</span>
-  {% if page < total_pages %}<a href="page_{{ "%03d" | format(page + 1) }}.html">next →</a>{% endif %}
+<div class="jump-bar">
+  <a href="#" id="jump-first">⇤ first</a>
+  <a href="#" id="jump-last">last ⇥</a>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function () {
   "use strict";
-  var input = document.getElementById("search-input");
-  var box = document.getElementById("search-results");
-  var data = null, requested = false;
+  var DATA = "data/";
+  var ICONS = { photo: "🖼", video: "🎬", audio: "🎵", voice: "🎤", video_note: "⭕",
+                document: "📄", sticker: "🩹", gif: "🎞" };
 
-  window.TG_SEARCH_REGISTER = function (d) { data = d; run(); };
+  var list = document.getElementById("messages");
+  var statusBox = document.getElementById("status");
+  var meta = null;
+  var cache = {};            // chunk index -> Promise<messages[]>
+  var lo = -1, hi = -1;      // contiguous range of chunks currently in the DOM
+  var busy = false;
+  var gen = 0;               // bumped by reset() so stale prepend/append results are dropped
 
-  function load() {
-    if (requested) return;
-    requested = true;
-    var s = document.createElement("script");
-    s.src = "search.js";
-    s.onerror = function () { box.hidden = false; box.textContent = "search.js not found — re-run `tgexport render`"; };
-    document.head.appendChild(s);
+  // ── helpers ───────────────────────────────────────────────────────────────
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function dayKey(iso) { var d = new Date(iso); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function timeOf(iso) { var d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function stamp(iso) { return dayKey(iso) + " " + timeOf(iso); }
+  function trunc(s, n) { s = s || ""; return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+  function showStatus(text) { statusBox.hidden = !text; statusBox.textContent = text || ""; }
+
+  function fetchJSON(name) {
+    return fetch(DATA + name).then(function (r) {
+      if (!r.ok) throw new Error(name + ": HTTP " + r.status);
+      return r.json();
+    });
+  }
+  function loadChunk(idx) {
+    if (!cache[idx]) cache[idx] = fetchJSON(meta.chunks[idx].file);
+    return cache[idx];
+  }
+  function chunkOf(id) {
+    for (var i = 0; i < meta.chunks.length; i++) {
+      var c = meta.chunks[i];
+      if (c.count && id >= c.first_id && id <= c.last_id) return i;
+    }
+    return -1;
   }
 
-  function run() {
+  // ── message rendering ────────────────────────────────────────────────────
+  function renderMedia(att) {
+    var box = el("div", "media");
+    if (!att.path) {
+      box.appendChild(el("span", "missing", (ICONS[att.category] || "📎") + " " + att.category + " (not downloaded)"));
+      return box;
+    }
+    var src = meta.media_prefix + att.path, node;
+    switch (att.category) {
+      case "photo": case "sticker":
+        var a = el("a"); a.href = src;
+        node = el("img"); node.src = src; node.alt = att.category; node.loading = "lazy";
+        a.appendChild(node); box.appendChild(a); return box;
+      case "video": case "video_note":
+        node = el("video", att.category === "video_note" ? "video-note" : null);
+        node.controls = true; node.preload = "metadata"; break;
+      case "gif":
+        node = el("video"); node.autoplay = node.loop = node.muted = node.playsInline = true; break;
+      case "voice": case "audio":
+        node = el("audio"); node.controls = true; node.preload = "none"; break;
+      default:
+        node = el("a", "doc-link", (ICONS[att.category] || "📎") + " " + att.path.split("/").pop());
+        node.href = src; box.appendChild(node); return box;
+    }
+    node.src = src;
+    box.appendChild(node);
+    return box;
+  }
+
+  function renderMessage(m) {
+    var div = el("div", "msg");
+    div.id = "msg-" + m.id;
+    if (m.service) {
+      div.appendChild(el("div", "msg-service", "— " + m.service + (m.text ? ": " + m.text : "") + " —"));
+      return div;
+    }
+    if (m.deleted && !m.text) {
+      div.appendChild(el("div", "msg-deleted", "[message deleted]"));
+      return div;
+    }
+    var head = el("div", "msg-header");
+    head.appendChild(el("span", "msg-sender", m.sender || "Unknown"));
+    var date = el("a", "msg-date", timeOf(m.date));
+    date.href = "#msg-" + m.id; date.title = stamp(m.date);
+    head.appendChild(date);
+    if (m.edits) head.appendChild(el("span", "edited-marker", "✎ edited"));
+    if (m.deleted) head.appendChild(el("span", "msg-deleted", "[deleted]"));
+    div.appendChild(head);
+
+    if (m.fwd_from) div.appendChild(el("div", "fwd-from", "↪ forwarded from " + m.fwd_from));
+    if (m.reply) {
+      var q = el("div", "reply-quote");
+      if (m.reply.missing) {
+        q.appendChild(el("span", "missing", "(message unavailable)"));
+      } else {
+        q.appendChild(el("div", "reply-sender", m.reply.sender));
+        var link = el("a", null, m.reply.text || "…");
+        link.href = "#msg-" + m.reply.id;
+        q.appendChild(link);
+      }
+      div.appendChild(q);
+    }
+    if (m.text) div.appendChild(el("div", "msg-text", m.text));
+    (m.attachments || []).forEach(function (a) { div.appendChild(renderMedia(a)); });
+    if (m.reactions) {
+      var r = el("div", "reactions");
+      m.reactions.forEach(function (x) { r.appendChild(el("span", null, x[0] + " " + x[1])); });
+      div.appendChild(r);
+    }
+    if (m.edits) {
+      var det = el("details", "edit-history");
+      det.appendChild(el("summary", null, "edit history"));
+      var ul = el("ul");
+      m.edits.forEach(function (e) { ul.appendChild(el("li", null, stamp(e[0]) + ": " + trunc(e[1], 120))); });
+      det.appendChild(ul);
+      div.appendChild(det);
+    }
+    return div;
+  }
+
+  function renderChunk(idx, messages) {
+    var frag = document.createDocumentFragment();
+    var prev = idx > 0 ? meta.chunks[idx - 1].last_date : null;
+    var prevDay = prev ? dayKey(prev) : null;
+    messages.forEach(function (m) {
+      var day = dayKey(m.date);
+      if (day !== prevDay) frag.appendChild(el("div", "day-sep", day));
+      prevDay = day;
+      frag.appendChild(renderMessage(m));
+    });
+    var wrap = el("div", "chunk");
+    wrap.dataset.chunk = idx;
+    wrap.appendChild(frag);
+    return wrap;
+  }
+
+  // ── chunk window management ──────────────────────────────────────────────
+  function reset(idx) {
+    var g = ++gen;
+    return loadChunk(idx).then(function (msgs) {
+      if (g !== gen) return;
+      list.innerHTML = "";
+      list.appendChild(renderChunk(idx, msgs));
+      lo = hi = idx;
+    });
+  }
+  function prepend() {
+    if (busy || lo <= 0) return;
+    busy = true;
+    var idx = lo - 1, g = gen;
+    loadChunk(idx).then(function (msgs) {
+      if (g !== gen) return;
+      var before = document.documentElement.scrollHeight;
+      list.insertBefore(renderChunk(idx, msgs), list.firstChild);
+      window.scrollBy(0, document.documentElement.scrollHeight - before);
+      lo = idx;
+    }).catch(fail).then(finish(g));
+  }
+  function append() {
+    if (busy || hi < 0 || hi >= meta.chunks.length - 1) return;
+    busy = true;
+    var idx = hi + 1, g = gen;
+    loadChunk(idx).then(function (msgs) {
+      if (g !== gen) return;
+      list.appendChild(renderChunk(idx, msgs));
+      hi = idx;
+    }).catch(fail).then(finish(g));
+  }
+
+  var EDGE = 1500;           // px from either end that triggers loading a neighbour chunk
+  function check() {
+    if (busy || !meta || lo < 0) return;
+    var y = window.scrollY, h = document.documentElement.scrollHeight;
+    if (y < EDGE) prepend();
+    else if (h - y - window.innerHeight < EDGE) append();
+  }
+  function done() { busy = false; setTimeout(check, 0); }
+  // a stale neighbour load must not clear `busy` while a newer reset() is in flight
+  function finish(g) { return function () { if (g === gen) done(); }; }
+
+  function highlight(node) {
+    node.scrollIntoView({ block: "center" });
+    node.classList.remove("hl");
+    void node.offsetWidth;
+    node.classList.add("hl");
+  }
+  function jumpTo(id) {
+    var node = document.getElementById("msg-" + id);
+    history.replaceState(null, "", "#msg-" + id);
+    if (node) { highlight(node); return; }
+    var idx = chunkOf(id);
+    if (idx < 0) { showStatus("Message #" + id + " is not in this archive"); return; }
+    busy = true;
+    return reset(idx).then(function () {
+      var n = document.getElementById("msg-" + id);
+      if (n) highlight(n);
+    }).catch(fail).then(done);
+  }
+  function jumpEdge(last) {
+    var idx = last ? meta.chunks.length - 1 : 0;
+    busy = true;
+    reset(idx).then(function () {
+      history.replaceState(null, "", location.pathname);
+      window.scrollTo(0, last ? document.documentElement.scrollHeight : 0);
+    }).catch(fail).then(done);
+  }
+
+  function fail(err) {
+    if (location.protocol === "file:") {
+      showStatus("Browsers block loading data over file:// — open the archive via `tgexport serve`.");
+    } else {
+      showStatus("Failed to load chat data: " + err.message);
+    }
+  }
+
+  // ── wiring ───────────────────────────────────────────────────────────────
+  document.addEventListener("click", function (ev) {
+    var a = ev.target.closest && ev.target.closest("a[href^='#msg-']");
+    if (!a) return;
+    ev.preventDefault();
+    jumpTo(parseInt(a.getAttribute("href").slice(5), 10));
+  });
+  document.getElementById("jump-first").addEventListener("click", function (e) { e.preventDefault(); jumpEdge(false); });
+  document.getElementById("jump-last").addEventListener("click", function (e) { e.preventDefault(); jumpEdge(true); });
+
+  fetchJSON("meta.json").then(function (m) {
+    meta = m;
+    document.getElementById("chat-stats").textContent = m.message_count + " messages";
+    if (!m.message_count) { showStatus("No messages."); return; }
+    var target = /^#msg-(\d+)$/.exec(location.hash);
+    if (target) return jumpTo(parseInt(target[1], 10));
+    busy = true;
+    return reset(m.chunks.length - 1).then(function () {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    });
+  }).catch(fail).then(done);
+  window.addEventListener("scroll", check, { passive: true });
+  window.addEventListener("hashchange", function () {
+    var target = /^#msg-(\d+)$/.exec(location.hash);
+    if (target && meta) jumpTo(parseInt(target[1], 10));
+  });
+
+  // ── search ───────────────────────────────────────────────────────────────
+  var input = document.getElementById("search-input");
+  var box = document.getElementById("search-results");
+  var index = null, requested = false;
+
+  function loadIndex() {
+    if (requested) return;
+    requested = true;
+    fetchJSON("search.json").then(function (d) { index = d; runSearch(); }).catch(function (err) {
+      box.hidden = false; box.textContent = "Search index unavailable: " + err.message;
+    });
+  }
+  function runSearch() {
     var q = input.value.trim().toLowerCase();
     if (!q) { box.hidden = true; box.innerHTML = ""; return; }
-    if (!data) { load(); box.hidden = false; box.textContent = "Loading search index…"; return; }
-    var words = q.split(/\s+/);
-    var hits = [];
-    for (var i = 0; i < data.messages.length && hits.length < 200; i++) {
-      var m = data.messages[i]; // [id, page, sender, date, text]
-      var hay = (m[2] + "\n" + m[4]).toLowerCase();
-      var ok = true;
+    if (!index) { loadIndex(); box.hidden = false; box.textContent = "Loading search index…"; return; }
+    var words = q.split(/\s+/), hits = [];
+    for (var i = 0; i < index.length && hits.length < 200; i++) {
+      var m = index[i]; // [id, chunk, sender, date, text]
+      var hay = (m[2] + "\n" + m[4]).toLowerCase(), ok = true;
       for (var w = 0; w < words.length; w++) if (hay.indexOf(words[w]) === -1) { ok = false; break; }
       if (ok) hits.push(m);
     }
-    render(hits);
-  }
-
-  function render(hits) {
     box.hidden = false;
     box.innerHTML = "";
-    var head = document.createElement("div");
-    head.className = "search-count";
-    head.textContent = hits.length
+    box.appendChild(el("div", "search-count", hits.length
       ? hits.length + " result(s)" + (hits.length >= 200 ? ", showing first 200" : "")
-      : "No results";
-    box.appendChild(head);
+      : "No results"));
     hits.forEach(function (m) {
-      var a = document.createElement("a");
-      a.className = "search-result";
-      a.href = "page_" + String(m[1]).padStart(3, "0") + ".html#msg-" + m[0];
-      var meta = document.createElement("div");
-      meta.className = "sr-meta";
-      meta.textContent = (m[2] || "Unknown") + " · " + m[3].slice(0, 10);
-      var body = document.createElement("div");
-      body.textContent = m[4].length > 200 ? m[4].slice(0, 200) + "…" : m[4];
-      a.appendChild(meta);
-      a.appendChild(body);
+      var a = el("a", "search-result");
+      a.href = "#msg-" + m[0];
+      a.appendChild(el("div", "sr-meta", (m[2] || "Unknown") + " · " + stamp(m[3])));
+      a.appendChild(el("div", null, trunc(m[4], 200)));
       box.appendChild(a);
     });
   }
-
-  input.addEventListener("input", run);
-  input.addEventListener("focus", load);
+  input.addEventListener("input", runSearch);
+  input.addEventListener("focus", loadIndex);
 })();
 </script>
 {% endblock %}

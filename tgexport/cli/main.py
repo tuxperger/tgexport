@@ -62,9 +62,11 @@ def cli(
 
 def _register_commands() -> None:
     from tgexport.cli.cmd_chats import chats
+    from tgexport.cli.cmd_dataset import dataset
     from tgexport.cli.cmd_export import export
     from tgexport.cli.cmd_login import login
     from tgexport.cli.cmd_render import render
+    from tgexport.cli.cmd_serve import serve
     from tgexport.cli.cmd_watch import watch
 
     cli.add_command(login)
@@ -72,6 +74,8 @@ def _register_commands() -> None:
     cli.add_command(export)
     cli.add_command(render)
     cli.add_command(watch)
+    cli.add_command(serve)
+    cli.add_command(dataset)
 
 
 _register_commands()

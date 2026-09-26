@@ -72,7 +72,15 @@ details.edit-history li { margin: 2px 0; }
   font-size: 13px; padding: 2px 8px; margin-right: 4px; margin-bottom: 2px;
 }
 
-.pagination { display: flex; gap: 16px; justify-content: center; padding: 16px 0; color: var(--muted); }
+.status {
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 12px;
+}
+/* the viewer compensates scroll itself when prepending chunks */
+html:has(#feed) { overflow-anchor: none; }
+.day-sep { text-align: center; color: var(--muted); font-size: 13px; margin: 14px 0 8px; }
+a.msg-date { color: var(--muted); }
+.jump-bar { display: flex; gap: 16px; justify-content: center; padding: 16px 0; }
 
 /* search */
 .search-box { margin: 0 0 16px; }
@@ -91,7 +99,8 @@ a.search-result {
 a.search-result:hover { text-decoration: none; border-color: var(--accent); }
 a.search-result .sr-meta { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 a.search-result .sr-meta .sr-chat { color: var(--accent); }
-.msg:target { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.msg.hl { animation: hl 2s ease-out; }
+@keyframes hl { from { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); } }
 </style>
 </head>
 <body>
