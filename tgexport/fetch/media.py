@@ -146,11 +146,10 @@ async def download_attachment(
             return Path(result)
 
     def _describe() -> str:
-        session = client.session
-        return (
-            f"download chat={chat_id} msg={message_id} "
-            f"(server: DC {session.dc_id} {session.server_address}:{session.port})"
-        )
+        # Deliberately no DC here: session.dc_id is the main DC, which is not
+        # where a migrated or CDN-hosted file actually comes from. The real
+        # address is logged by instrument_dc_logging.
+        return f"download chat={chat_id} msg={message_id}"
 
     tmp_path = await call_with_retry(_fetch, description=_describe)
     if tmp_path is None:
